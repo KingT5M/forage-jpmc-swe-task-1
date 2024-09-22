@@ -146,21 +146,31 @@ def order_book(orders, book, stock_name):
 #
 # Test Data Persistence
 
-def generate_csv():
+# Declare the file path for the CSV file
+CSV_FILE_PATH = 'c:/Users/T5M/Desktop/JP-MORGAN-JOB SIM/forage-jpmc-swe-task-1/test.csv'
+
+def generate_csv(file_path):
     """ Generate a CSV of order history. """
-    with open('test.csv', 'wb') as f:
+    with open(file_path, 'w', newline='') as f:
         writer = csv.writer(f)
         for t, stock, side, order, size in orders(market()):
             if t > MARKET_OPEN + SIM_LENGTH:
                 break
             writer.writerow([t, stock, side, order, size])
 
+def read_csv(file_path):
+    """ Read a CSV of order history into a list. """
+    if os.path.isfile(file_path):
+        with open(file_path, 'rt') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                print(row)  # Check the rows being read
+                time, stock, side, order, size = row
+                yield dateutil.parser.parse(time), stock, side, float(order), int(size)
+    else:
+        print(f"CSV file not found at: {file_path}")
+        generate_csv(file_path)
 
-def read_csv():
-    """ Read a CSV or order history into a list. """
-    with open('test.csv', 'rt') as f:
-        for time, stock, side, order, size in csv.reader(f):
-            yield dateutil.parser.parse(time), stock, side, float(order), int(size)
 
 
 ################################################################################
@@ -217,28 +227,33 @@ def get(req_handler, routes):
 
 
 def run(routes, host='0.0.0.0', port=8080):
-    """ Runs a class as a server whose methods have been decorated with
-        @route.
-    """
-
+    """Runs a class as a server whose methods have been decorated with @route."""
+    
     class RequestHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args, **kwargs):
-            pass
+            pass  # Suppress logging
 
         def do_GET(self):
             get(self, routes)
 
     server = ThreadedHTTPServer((host, port), RequestHandler)
-    thread = threading.Thread(target=server.serve_forever)
-    thread.daemon = True
-    thread.start()
-    print('HTTP server started on port 8080')
-    while True:
-        from time import sleep
-        sleep(1)
-    server.shutdown()
-    server.start()
-    server.waitForThread()
+    print(f'HTTP server started on {host} port {port}')
+
+    try:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        while True:
+            from time import sleep
+            sleep(1)
+    except KeyboardInterrupt:
+        print("Server is shutting down...")
+        server.shutdown()  # Properly shut down the server
+        thread.join()      # Ensure the server thread is properly joined
+    finally:
+        print("Server stopped.")
+
 
 
 ################################################################################
@@ -257,11 +272,15 @@ class App(object):
     def __init__(self):
         self._book_1 = dict()
         self._book_2 = dict()
-        self._data_1 = order_book(read_csv(), self._book_1, 'ABC')
-        self._data_2 = order_book(read_csv(), self._book_2, 'DEF')
-        self._rt_start = datetime.now()
-        self._sim_start, _, _ = next(self._data_1)
-        self.read_10_first_lines()
+        try:
+            self._data_1 = order_book(read_csv(CSV_FILE_PATH), self._book_1, 'ABC')
+            self._data_2 = order_book(read_csv(CSV_FILE_PATH), self._book_2, 'DEF')
+            self._rt_start = datetime.now()
+            self._sim_start, _, _ = next(self._data_1)
+            self.read_10_first_lines()
+        except StopIteration:
+            print("No data available or data exhausted. Please ensure the CSV has enough entries.")
+
 
     @property
     def _current_book_1(self):
@@ -334,7 +353,14 @@ class App(object):
 # Main
 
 if __name__ == '__main__':
-    if not os.path.isfile('test.csv'):
+    if not os.path.isfile(CSV_FILE_PATH):
         print("No data found, generating...")
-        generate_csv()
-    run(App())
+        generate_csv(CSV_FILE_PATH)
+    else:
+        print(f"CSV file found at: {CSV_FILE_PATH}, proceeding with reading data...")
+        data = read_csv(CSV_FILE_PATH)
+        for d in data:
+            print(d)
+    # Start the HTTP server
+    app = App()
+    run(app)  # This will start the server
